@@ -1,0 +1,25 @@
+{
+  "model_type": "LinearRegression",
+  "model_version": "baseline_linear_v1",
+  "training_features": [
+    "area_sqm",
+    "rooms",
+    "floor"
+  ],
+  "target": "adjusted_price",
+  "training_dataset_size": 287,
+  "train_row_count": 229,
+  "test_row_count": 58,
+  "test_size": 0.2,
+  "random_state": 42,
+  "coefficients": {
+    "area_sqm": 34645.83403177071,
+    "rooms": 169790.32947952242,
+    "floor": 277284.7960936245
+  },
+  "intercept": 524911.6328105628,
+  "mae": 1314107.6786746876,
+  "rmse": 2082992.8621117845,
+  "r2": 0.0752227235759162,
+  "generated_at": "2026-08-22T15:04:54.283095+00:00"
+}

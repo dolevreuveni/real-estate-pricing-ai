@@ -4,7 +4,11 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from src.data.apartment_reader import load_normalized_apartments, normalize_apartments
+from src.data.apartment_reader import (
+    NORMALIZED_APARTMENT_COLUMNS,
+    load_normalized_apartments,
+    normalize_apartments,
+)
 
 COLUMNS = [
     "מס' קומה",
@@ -16,9 +20,24 @@ COLUMNS = [
     "הערות",
 ]
 
+# Feature #7.5: the same 7 required columns, plus the 6 optional
+# enrichment columns.
+ENRICHED_COLUMNS = COLUMNS + [
+    "מספר חניות",
+    "שטח מחסן",
+    "כיוון מרפסת",
+    "שטח גינה",
+    "שטח גג מוצמד",
+    "קומה אחרונה",
+]
+
 
 def _raw(rows: list) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=COLUMNS)
+
+
+def _raw_enriched(rows: list) -> pd.DataFrame:
+    return pd.DataFrame(rows, columns=ENRICHED_COLUMNS)
 
 
 def test_regular_single_level_apartment():
@@ -118,3 +137,179 @@ def test_real_source_file_normalizes_to_expected_shape():
     assert apt39["num_levels"] == 2
     assert apt39["property_type"] == "duplex"
     assert apt39["interior_area_sqm"] == pytest.approx(158.6)
+
+
+# --- Feature #7.5: enrichment columns ---------------------------------
+
+
+def test_new_enrichment_columns_are_read_correctly():
+    raw = _raw_enriched(
+        [
+            [1, 101, 3, 69.0, 12.0, "מזרח", None, 1, 4.0, "מזרח", 0.0, 0.0, False],
+        ]
+    )
+    result = normalize_apartments(raw)
+
+    row = result.iloc[0]
+    assert row["parking_count"] == 1
+    assert row["storage_area_sqm"] == pytest.approx(4.0)
+    assert row["balcony_direction"] == "East"  # translated from מזרח
+    assert row["garden_area_sqm"] == pytest.approx(0.0)
+    assert row["roof_area_sqm"] == pytest.approx(0.0)
+    assert bool(row["is_top_floor"]) is False
+
+
+def test_optional_columns_missing_does_not_crash_and_stays_null():
+    # the original 7-column source (no enrichment columns at all) --
+    # backward compatibility.
+    raw = _raw([[1, 101, 3, 69.0, 12.0, "מזרח", None]])
+    result = normalize_apartments(raw)
+
+    row = result.iloc[0]
+    assert len(result) == 1
+    for field in (
+        "parking_count",
+        "storage_area_sqm",
+        "balcony_direction",
+        "garden_area_sqm",
+        "roof_area_sqm",
+        "is_top_floor",
+    ):
+        assert pd.isna(row[field])
+
+
+def test_existing_required_schema_still_works_without_enrichment():
+    # existing (pre-Feature #7.5) behavior must be unchanged for a plain
+    # source file.
+    raw = _raw([[1, 101, 3, 69.0, 12.0, "מזרח", None]])
+    result = normalize_apartments(raw)
+    assert list(result.columns) == NORMALIZED_APARTMENT_COLUMNS
+    assert result.iloc[0]["interior_area_sqm"] == pytest.approx(69.0)
+
+
+def test_parking_count_is_not_double_counted_across_duplex_rows():
+    raw = _raw_enriched(
+        [
+            [9, 38, 7, 80.7, 19.6, "מערב", "דופלקס", 1, 8.0, "מזרח", 0.0, 51.0, False],
+            [10, 38, 7, 89.4, 20.0, None, "דופלקס", 1, 8.0, "מזרח", 0.0, 51.0, False],
+        ]
+    )
+    result = normalize_apartments(raw)
+
+    row = result.iloc[0]
+    assert row["num_levels"] == 2
+    assert row["parking_count"] == 1  # NOT 2 -- repeated apartment-level value
+
+
+def test_storage_area_is_not_double_counted_across_triplex_rows():
+    raw = _raw_enriched(
+        [
+            [9, 36, 6, 73.4, 12.0, "מזרח", "טריפלקס", 2, 8.0, "מזרח", 0.0, 76.6, False],
+            [10, 36, 6, 78.5, 20.0, "מזרח", "טריפלקס", 2, 8.0, "מזרח", 0.0, 76.6, False],
+            [11, 36, 6, 103.3, 62.6, "מזרח", "טריפלקס", 2, 8.0, "מזרח", 0.0, 76.6, True],
+        ]
+    )
+    result = normalize_apartments(raw)
+
+    row = result.iloc[0]
+    assert row["num_levels"] == 3
+    assert row["storage_area_sqm"] == pytest.approx(8.0)  # NOT 24.0
+
+
+def test_balcony_direction_is_preserved_and_translated():
+    raw = _raw_enriched(
+        [
+            [1, 101, 3, 69.0, 12.0, "מזרח", None, 1, 4.0, "צפון-מערב", 0.0, 0.0, False],
+        ]
+    )
+    result = normalize_apartments(raw)
+    assert result.iloc[0]["balcony_direction"] == "North-West"
+
+
+def test_garden_area_sqm_only_populated_for_garden_apartments():
+    raw = _raw_enriched(
+        [
+            [
+                "קרקע", 1, 3, 70.8, 100.0, "מזרח", "דירת גן",
+                1, 4.0, "מזרח", 35.4, 0.0, False,
+            ],
+            [1, 4, 3, 69.0, 12.0, "מזרח", None, 1, 4.0, "מזרח", 0.0, 0.0, False],
+        ]
+    )
+    result = normalize_apartments(raw)
+
+    garden_apt = result[result["apartment_id"] == 1].iloc[0]
+    regular_apt = result[result["apartment_id"] == 4].iloc[0]
+    assert garden_apt["garden_area_sqm"] == pytest.approx(35.4)
+    assert regular_apt["garden_area_sqm"] == pytest.approx(0.0)
+
+
+def test_roof_area_sqm_uses_apartment_total_not_summed_across_rows():
+    # roof_area_sqm is a single shared amenity for the whole multi-level
+    # apartment -- the source repeats the SAME total on every row, and
+    # normalization must take that value once (max), never sum it.
+    raw = _raw_enriched(
+        [
+            [9, 36, 6, 73.4, 12.0, "מזרח", "טריפלקס", 2, 8.0, "מזרח", 0.0, 76.6, False],
+            [10, 36, 6, 78.5, 20.0, "מזרח", "טריפלקס", 2, 8.0, "מזרח", 0.0, 76.6, False],
+            [11, 36, 6, 103.3, 62.6, "מזרח", "טריפלקס", 2, 8.0, "מזרח", 0.0, 76.6, True],
+        ]
+    )
+    result = normalize_apartments(raw)
+    assert result.iloc[0]["roof_area_sqm"] == pytest.approx(76.6)  # NOT 229.8
+
+
+def test_is_top_floor_is_true_if_any_level_reaches_the_top():
+    raw = _raw_enriched(
+        [
+            [9, 36, 6, 73.4, 12.0, "מזרח", "טריפלקס", 2, 8.0, "מזרח", 0.0, 76.6, False],
+            [10, 36, 6, 78.5, 20.0, "מזרח", "טריפלקס", 2, 8.0, "מזרח", 0.0, 76.6, False],
+            [11, 36, 6, 103.3, 62.6, "מזרח", "טריפלקס", 2, 8.0, "מזרח", 0.0, 76.6, True],
+        ]
+    )
+    result = normalize_apartments(raw)
+    assert bool(result.iloc[0]["is_top_floor"]) is True
+
+
+def test_is_top_floor_false_when_no_level_is_flagged():
+    raw = _raw_enriched(
+        [
+            [9, 38, 7, 80.7, 19.6, "מערב", "דופלקס", 2, 8.0, "מזרח", 0.0, 51.0, False],
+            [10, 38, 7, 89.4, 20.0, None, "דופלקס", 2, 8.0, "מזרח", 0.0, 51.0, False],
+        ]
+    )
+    result = normalize_apartments(raw)
+    assert bool(result.iloc[0]["is_top_floor"]) is False
+
+
+def test_real_enriched_source_file_still_produces_39_apartments_with_correct_values():
+    raw_path = Path(__file__).resolve().parents[1] / "data" / "raw" / "Apartment_example.xlsx"
+    if not raw_path.exists():
+        pytest.skip("raw source file not available")
+
+    result = load_normalized_apartments(raw_path)
+
+    assert len(result) == 39
+    assert list(result.columns) == NORMALIZED_APARTMENT_COLUMNS
+
+    # triplex apartments (36, 37) reach the building's top floor (11);
+    # duplex apartments (38, 39) top out at floor 10 and do not.
+    apt36 = result[result["apartment_id"] == 36].iloc[0]
+    apt38 = result[result["apartment_id"] == 38].iloc[0]
+    assert bool(apt36["is_top_floor"]) is True
+    assert bool(apt38["is_top_floor"]) is False
+
+    # parking/storage/roof are apartment-level, not summed across the
+    # triplex's 3 source rows.
+    assert apt36["parking_count"] == 2
+    assert apt36["storage_area_sqm"] == pytest.approx(8.0)
+    assert apt36["roof_area_sqm"] == pytest.approx(76.6)
+
+    # garden apartments have a garden; regular apartments don't.
+    garden_apts = result[result["apartment_id"].isin([1, 2, 3])]
+    assert (garden_apts["garden_area_sqm"] > 0).all()
+    regular_apt = result[result["apartment_id"] == 4].iloc[0]
+    assert regular_apt["garden_area_sqm"] == pytest.approx(0.0)
+
+    # directions (general air-direction) is unchanged, still raw Hebrew.
+    assert apt36["directions"] == "מזרח"
