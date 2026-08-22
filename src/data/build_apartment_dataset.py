@@ -3,13 +3,12 @@
 Run as a module from the project root:
     python -m src.data.build_apartment_dataset
 """
-from pathlib import Path
-
+from src.config.settings import PROCESSED_DATA_DIR, RAW_DATA_DIR
 from src.data.apartment_reader import load_normalized_apartments
 
-RAW_PATH = Path("data/raw/Apartment_example.xlsx")
-CSV_OUTPUT_PATH = Path("data/processed/apartments.csv")
-XLSX_OUTPUT_PATH = Path("data/processed/apartments.xlsx")
+RAW_PATH = RAW_DATA_DIR / "Apartment_example.xlsx"
+CSV_OUTPUT_PATH = PROCESSED_DATA_DIR / "apartments.csv"
+XLSX_OUTPUT_PATH = PROCESSED_DATA_DIR / "apartments.xlsx"
 
 
 def main() -> None:
