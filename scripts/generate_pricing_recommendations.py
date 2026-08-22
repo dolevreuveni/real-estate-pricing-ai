@@ -1,6 +1,8 @@
 """Train the Current Market model, predict a current-market value for
-every project apartment, and combine it with the existing historical
-GovMap/CBS regression price into a recommended_marketing_price.
+every project apartment, combine it with the existing historical
+GovMap/CBS regression price into a recommended_marketing_price, and then
+apply the Feature #9 company-strategy layer on top to produce
+final_strategy_price.
 
     data/external/current_market_500_updated.xlsx (SYNTHETIC POC data)
         -> Current Market model (LinearRegression + OneHotEncoder)
@@ -8,10 +10,16 @@ GovMap/CBS regression price into a recommended_marketing_price.
     data/processed/apartment_base_prices.csv (Feature #7 output)
         -> historical_base_price per apartment
     combine_prices() with HISTORICAL_MARKET_WEIGHT / CURRENT_MARKET_WEIGHT
+        -> recommended_marketing_price
+    apply_strategy_adjustment() with COMPANY_POSITIONING_ADJUSTMENT_PCT /
+    SALES_PHASE_ADJUSTMENT_PCT / INVENTORY_STRATEGY_ADJUSTMENT_PCT /
+    data/external/apartment_strategy_adjustments.csv
+        -> final_strategy_price
         -> data/processed/apartment_pricing_recommendations.{csv,xlsx}
+        -> data/output/strategy_pricing_report.json
 
-This script does not modify or retrain the historical regression model --
-run scripts/train_baseline_pricing_model.py first to (re)generate
+This script does not modify or retrain either regression model -- run
+scripts/train_baseline_pricing_model.py first to (re)generate
 data/processed/apartment_base_prices.csv.
 
 Run:
@@ -20,6 +28,7 @@ Run:
 """
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 if __name__ == "__main__" and __package__ is None:
@@ -29,13 +38,17 @@ import pandas as pd
 
 from scripts.train_baseline_pricing_model import APARTMENT_PRICES_CSV_PATH
 from src.config.settings import (
+    COMPANY_POSITIONING_ADJUSTMENT_PCT,
     CURRENT_MARKET_DATA_TYPE,
     CURRENT_MARKET_INPUT_PATH,
     CURRENT_MARKET_WEIGHT,
     HISTORICAL_MARKET_WEIGHT,
+    INVENTORY_STRATEGY_ADJUSTMENT_PCT,
     OUTPUT_DATA_DIR,
     PROCESSED_DATA_DIR,
+    SALES_PHASE_ADJUSTMENT_PCT,
 )
+from src.data.apartment_strategy_loader import load_apartment_strategy_adjustments
 from src.data.build_apartment_dataset import CSV_OUTPUT_PATH as APARTMENTS_CSV_PATH
 from src.data.current_market_loader import load_current_market_listings
 from src.pricing.current_market_features import (
@@ -46,8 +59,10 @@ from src.pricing.current_market_features import (
 from src.pricing.current_market_model import predict, train_and_evaluate
 from src.pricing.pricing_recommendation import combine_prices, validate_weights
 from src.pricing.pricing_utils import enforce_non_negative_predictions
+from src.pricing.strategy_adjustment import apply_strategy_adjustment, get_apartment_strategy_row
 
 MODEL_REPORT_PATH = OUTPUT_DATA_DIR / "current_market_model_report.json"
+STRATEGY_REPORT_PATH = OUTPUT_DATA_DIR / "strategy_pricing_report.json"
 RECOMMENDATIONS_CSV_PATH = PROCESSED_DATA_DIR / "apartment_pricing_recommendations.csv"
 RECOMMENDATIONS_XLSX_PATH = PROCESSED_DATA_DIR / "apartment_pricing_recommendations.xlsx"
 
@@ -80,6 +95,15 @@ OUTPUT_COLUMNS = [
     "historical_model_version",
     "current_market_model_version",
     "current_market_data_type",
+    "company_positioning_adjustment_pct",
+    "sales_phase_adjustment_pct",
+    "inventory_strategy_adjustment_pct",
+    "manual_adjustment_pct",
+    "manual_adjustment_amount",
+    "strategy_note",
+    "total_strategy_adjustment_pct",
+    "final_strategy_price",
+    "final_strategy_price_per_sqm",
     "pricing_status",
 ]
 
@@ -186,6 +210,69 @@ def main() -> None:
     )
     result["pricing_status"] = statuses
 
+    # --- Feature #9: company strategy pricing layer ---
+    strategy_df = load_apartment_strategy_adjustments()
+
+    manual_pcts = []
+    manual_amounts = []
+    strategy_notes = []
+    final_strategy_prices = []
+    final_statuses = []
+    for _, row in result.iterrows():
+        try:
+            strategy_row = get_apartment_strategy_row(strategy_df, row["apartment_id"])
+        except ValueError:
+            manual_pcts.append(None)
+            manual_amounts.append(None)
+            strategy_notes.append(None)
+            final_strategy_prices.append(None)
+            final_statuses.append("missing_strategy_row")
+            continue
+
+        manual_pcts.append(strategy_row["manual_adjustment_pct"])
+        manual_amounts.append(strategy_row["manual_adjustment_amount"])
+        strategy_notes.append(strategy_row["strategy_note"])
+
+        base_price = row["recommended_marketing_price"]
+        if row["pricing_status"] != "priced" or pd.isna(base_price):
+            final_strategy_prices.append(None)
+            final_statuses.append(row["pricing_status"])
+            continue
+
+        try:
+            final_strategy_prices.append(
+                apply_strategy_adjustment(
+                    base_price,
+                    COMPANY_POSITIONING_ADJUSTMENT_PCT,
+                    SALES_PHASE_ADJUSTMENT_PCT,
+                    INVENTORY_STRATEGY_ADJUSTMENT_PCT,
+                    strategy_row["manual_adjustment_pct"],
+                    strategy_row["manual_adjustment_amount"],
+                )
+            )
+            final_statuses.append("priced")
+        except ValueError:
+            final_strategy_prices.append(None)
+            final_statuses.append("invalid_strategy_adjustment")
+
+    result["company_positioning_adjustment_pct"] = COMPANY_POSITIONING_ADJUSTMENT_PCT
+    result["sales_phase_adjustment_pct"] = SALES_PHASE_ADJUSTMENT_PCT
+    result["inventory_strategy_adjustment_pct"] = INVENTORY_STRATEGY_ADJUSTMENT_PCT
+    result["manual_adjustment_pct"] = manual_pcts
+    result["manual_adjustment_amount"] = manual_amounts
+    result["strategy_note"] = strategy_notes
+    result["total_strategy_adjustment_pct"] = (
+        COMPANY_POSITIONING_ADJUSTMENT_PCT
+        + SALES_PHASE_ADJUSTMENT_PCT
+        + INVENTORY_STRATEGY_ADJUSTMENT_PCT
+        + result["manual_adjustment_pct"]
+    )
+    result["final_strategy_price"] = final_strategy_prices
+    result["final_strategy_price_per_sqm"] = (
+        result["final_strategy_price"] / result["interior_area_sqm"]
+    )
+    result["pricing_status"] = final_statuses
+
     final = result[OUTPUT_COLUMNS]
 
     RECOMMENDATIONS_CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -208,13 +295,48 @@ def main() -> None:
         print(f"Min recommended price: {priced['recommended_marketing_price'].min():.2f}")
         print(f"Max recommended price: {priced['recommended_marketing_price'].max():.2f}")
         print(f"Average recommended price: {priced['recommended_marketing_price'].mean():.2f}")
+        print(f"Min final strategy price: {priced['final_strategy_price'].min():.2f}")
+        print(f"Max final strategy price: {priced['final_strategy_price'].max():.2f}")
+        print(f"Average final strategy price: {priced['final_strategy_price'].mean():.2f}")
     not_priced = final[final["pricing_status"] != "priced"]
     if not not_priced.empty:
         print("Apartments not priced:")
         for _, row in not_priced.iterrows():
             print(f"  apartment_id {row['apartment_id']}: {row['pricing_status']}")
 
+    # --- Feature #9: strategy summary report ---
+    apartments_with_manual_adjustments = int(
+        (
+            (final["manual_adjustment_pct"].fillna(0) != 0)
+            | (final["manual_adjustment_amount"].fillna(0) != 0)
+        ).sum()
+    )
+    strategy_report = {
+        "generation_timestamp": datetime.now(timezone.utc).isoformat(),
+        "company_positioning_adjustment_pct": COMPANY_POSITIONING_ADJUSTMENT_PCT,
+        "sales_phase_adjustment_pct": SALES_PHASE_ADJUSTMENT_PCT,
+        "inventory_strategy_adjustment_pct": INVENTORY_STRATEGY_ADJUSTMENT_PCT,
+        "apartment_count": int(len(final)),
+        "apartments_with_manual_adjustments": apartments_with_manual_adjustments,
+        "average_market_recommended_price": (
+            float(priced["recommended_marketing_price"].mean()) if not priced.empty else None
+        ),
+        "average_final_strategy_price": (
+            float(priced["final_strategy_price"].mean()) if not priced.empty else None
+        ),
+        "total_market_recommended_value": (
+            float(priced["recommended_marketing_price"].sum()) if not priced.empty else None
+        ),
+        "total_final_strategy_value": (
+            float(priced["final_strategy_price"].sum()) if not priced.empty else None
+        ),
+    }
+    STRATEGY_REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(STRATEGY_REPORT_PATH, "w", encoding="utf-8") as f:
+        json.dump(strategy_report, f, ensure_ascii=False, indent=2)
+
     print(f"\nCurrent Market model report: {MODEL_REPORT_PATH}")
+    print(f"Strategy pricing report: {STRATEGY_REPORT_PATH}")
     print(f"Recommendations CSV: {RECOMMENDATIONS_CSV_PATH}")
     print(f"Recommendations XLSX: {RECOMMENDATIONS_XLSX_PATH}")
 

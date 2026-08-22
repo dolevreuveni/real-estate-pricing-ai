@@ -89,3 +89,22 @@ TARGET_MARKET_SEGMENT = "New Project"
 # every time prices are combined.
 HISTORICAL_MARKET_WEIGHT = 0.70
 CURRENT_MARKET_WEIGHT = 0.30
+
+# Feature #9: company-strategy pricing layer (see
+# src/pricing/strategy_adjustment.py), applied ON TOP of
+# recommended_marketing_price. These are explicit company decisions --
+# never inferred or auto-derived here -- and must never duplicate a
+# property-feature premium already reflected in the Current Market model
+# (parking, storage, balcony, floor, garden, roof, new-project
+# positioning, top-floor status, etc; see
+# src/pricing/current_market_features.py). Kept at neutral (0.0) defaults
+# until the company makes an explicit positioning/phase/inventory
+# decision.
+COMPANY_POSITIONING_ADJUSTMENT_PCT = 0.0
+SALES_PHASE_ADJUSTMENT_PCT = 0.0
+INVENTORY_STRATEGY_ADJUSTMENT_PCT = 0.0
+
+# One row per target apartment with optional marketing-department manual
+# adjustments (see src/data/apartment_strategy_loader.py). Never
+# hardcoded elsewhere.
+APARTMENT_STRATEGY_ADJUSTMENTS_PATH = EXTERNAL_DATA_DIR / "apartment_strategy_adjustments.csv"

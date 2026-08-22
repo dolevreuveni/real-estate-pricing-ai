@@ -1,0 +1,12 @@
+{
+  "generation_timestamp": "2026-08-22T15:36:42.308902+00:00",
+  "company_positioning_adjustment_pct": 0.0,
+  "sales_phase_adjustment_pct": 0.0,
+  "inventory_strategy_adjustment_pct": 0.0,
+  "apartment_count": 39,
+  "apartments_with_manual_adjustments": 0,
+  "average_market_recommended_price": 6236245.943747318,
+  "average_final_strategy_price": 6236245.943747318,
+  "total_market_recommended_value": 243213591.80614543,
+  "total_final_strategy_value": 243213591.80614543
+}
