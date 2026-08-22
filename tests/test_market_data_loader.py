@@ -14,8 +14,15 @@ from src.data.market_data_loader import (
 )
 
 
-def test_valid_empty_transactions_csv():
-    df = load_transactions()
+def test_valid_empty_transactions_csv(tmp_path: Path):
+    # A header-only file is a valid, empty transactions dataset. This is
+    # tested in isolation against a temporary file rather than the real
+    # data/external/transactions.csv, which Feature #5 intentionally
+    # populates with real transactions and is not expected to be empty.
+    csv_path = tmp_path / "transactions_empty.csv"
+    csv_path.write_text(",".join(TRANSACTIONS_COLUMNS) + "\n", encoding="utf-8")
+
+    df = load_transactions(csv_path)
     assert isinstance(df, pd.DataFrame)
     assert len(df) == 0
     assert list(df.columns) == TRANSACTIONS_COLUMNS

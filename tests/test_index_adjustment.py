@@ -7,6 +7,7 @@ from src.pricing.index_adjustment import (
     adjust_transaction_price,
     adjust_transaction_price_using_cbs,
     calculate_index_adjustment_factor,
+    enrich_transactions_with_cbs_index,
 )
 
 
@@ -117,3 +118,47 @@ def test_adjust_transaction_price_using_cbs():
     assert result["current_stable_index_period"] == pd.Timestamp(2026, 2, 1)
     assert result["index_adjustment_factor"] == pytest.approx(1.2)
     assert result["adjusted_price"] == pytest.approx(4_800_000)
+
+
+def test_enrich_transactions_with_cbs_index_adds_expected_columns():
+    history = _fake_cbs_history()
+    transactions = pd.DataFrame(
+        [
+            {
+                "deal_id": 1,
+                "transaction_date": pd.Timestamp("2024-01-01"),
+                "original_price": 4_000_000,
+                "area_sqm": 80.0,
+            }
+        ]
+    )
+
+    enriched = enrich_transactions_with_cbs_index(transactions, history=history)
+    row = enriched.iloc[0]
+
+    assert row["price_index_at_transaction"] == pytest.approx(500.0)
+    assert row["current_price_index"] == pytest.approx(600.0)
+    assert row["index_adjustment_factor"] == pytest.approx(1.2)
+    assert row["adjusted_price"] == pytest.approx(4_800_000)
+    assert row["adjusted_price_per_sqm"] == pytest.approx(4_800_000 / 80.0)
+
+
+def test_enrich_transactions_leaves_nulls_when_no_cbs_index_available():
+    history = _fake_cbs_history()
+    transactions = pd.DataFrame(
+        [
+            {
+                # no CBS observation exists for this month in the fake history
+                "deal_id": 2,
+                "transaction_date": pd.Timestamp("1999-01-01"),
+                "original_price": 1_000_000,
+                "area_sqm": 50.0,
+            }
+        ]
+    )
+
+    enriched = enrich_transactions_with_cbs_index(transactions, history=history)
+    row = enriched.iloc[0]
+
+    assert pd.isna(row["price_index_at_transaction"])
+    assert pd.isna(row["adjusted_price"])

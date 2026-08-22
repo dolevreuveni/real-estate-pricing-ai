@@ -78,3 +78,60 @@ def adjust_transaction_price_using_cbs(
         "index_adjustment_factor": factor,
         "adjusted_price": adjusted_price,
     }
+
+
+def enrich_transactions_with_cbs_index(
+    transactions: pd.DataFrame,
+    history: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Add CBS-index-based price adjustment columns to a transactions DataFrame.
+
+    Adds: price_index_at_transaction, current_price_index,
+    index_adjustment_factor, adjusted_price, adjusted_price_per_sqm.
+
+    Enrichment is attempted for every row with a usable transaction_date
+    and original_price, regardless of any comparable-eligibility flag the
+    caller may have set elsewhere (e.g. transaction_quality.py) -- an
+    excluded transaction may still be technically valid enough for CBS
+    enrichment. Rows where enrichment isn't possible (no CBS index for
+    that month, missing price/date) are left with null enrichment fields
+    rather than a guessed value.
+    """
+    result = transactions.copy()
+    for column in [
+        "price_index_at_transaction",
+        "current_price_index",
+        "index_adjustment_factor",
+        "adjusted_price",
+        "adjusted_price_per_sqm",
+    ]:
+        result[column] = None
+
+    for idx, row in result.iterrows():
+        original_price = row.get("original_price")
+        transaction_date = row.get("transaction_date")
+        if original_price is None or pd.isna(original_price) or pd.isna(transaction_date):
+            continue
+
+        try:
+            enrichment = adjust_transaction_price_using_cbs(
+                original_price=float(original_price),
+                transaction_date=transaction_date,
+                history=history,
+            )
+        except ValueError:
+            continue
+
+        area_sqm = row.get("area_sqm")
+        adjusted_price = enrichment["adjusted_price"]
+        adjusted_price_per_sqm = (
+            adjusted_price / area_sqm if area_sqm not in (None, 0) and not pd.isna(area_sqm) else None
+        )
+
+        result.at[idx, "price_index_at_transaction"] = enrichment["price_index_at_transaction"]
+        result.at[idx, "current_price_index"] = enrichment["current_stable_price_index"]
+        result.at[idx, "index_adjustment_factor"] = enrichment["index_adjustment_factor"]
+        result.at[idx, "adjusted_price"] = adjusted_price
+        result.at[idx, "adjusted_price_per_sqm"] = adjusted_price_per_sqm
+
+    return result
