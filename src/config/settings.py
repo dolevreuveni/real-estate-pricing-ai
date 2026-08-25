@@ -87,8 +87,8 @@ TARGET_MARKET_SEGMENT = "New Project"
 # recommended_marketing_price (see src/pricing/pricing_recommendation.py).
 # Must sum to 1.0 -- validated at import time of that module and again
 # every time prices are combined.
-HISTORICAL_MARKET_WEIGHT = 0.50
-CURRENT_MARKET_WEIGHT = 0.50
+HISTORICAL_MARKET_WEIGHT = 0.70
+CURRENT_MARKET_WEIGHT = 0.30
 
 # Feature #9: company-strategy pricing layer (see
 # src/pricing/strategy_adjustment.py), applied ON TOP of
