@@ -69,9 +69,9 @@
   "mae": 215724.3526804653,
   "rmse": 272750.924013752,
   "r2": 0.9799686435677977,
-  "generated_at": "2026-08-22T15:36:42.206116+00:00",
+  "generated_at": "2026-08-25T21:19:11.869726+00:00",
   "pricing_weights": {
-    "historical_market_weight": 0.7,
-    "current_market_weight": 0.3
+    "historical_market_weight": 0.5,
+    "current_market_weight": 0.5
   }
 }

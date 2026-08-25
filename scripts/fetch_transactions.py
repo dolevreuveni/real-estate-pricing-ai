@@ -31,6 +31,7 @@ from src.config.settings import (
 )
 from src.data.cbs_client import get_latest_stable_index, load_index_history_cache
 from src.data.govmap_client import fetch_transactions_near_address
+from src.data.historical_transaction_enrichment import evaluate_historical_training_eligibility
 from src.data.transaction_normalizer import normalize_transactions
 from src.data.transaction_quality import evaluate_transactions
 from src.pricing.index_adjustment import enrich_transactions_with_cbs_index
@@ -97,6 +98,18 @@ FINAL_COLUMNS = [
     # selected as a comparable" (see src/data/transaction_quality.py).
     "is_eligible_comparable",
     "exclusion_reason",
+    # Sold-fraction / full-ownership-equivalent audit trail and Historical
+    # Regression training eligibility -- see
+    # src/data/historical_transaction_enrichment.py for the full
+    # rationale (GovMap does not expose a sold-fraction field; these
+    # columns exist for forward-compatibility and are currently null for
+    # every row, with a POC price-per-sqm heuristic used as a fallback).
+    "sold_fraction",
+    "full_ownership_price",
+    "full_ownership_price_per_sqm",
+    "suspicious_partial_transaction",
+    "used_for_historical_model",
+    "historical_model_exclusion_reason",
     "source",
     "source_url",
     "data_retrieved_at",
@@ -134,7 +147,8 @@ def main() -> None:
     evaluated = evaluate_transactions(normalized)
 
     cbs_history = load_index_history_cache()
-    enriched = enrich_transactions_with_cbs_index(evaluated, history=cbs_history)
+    cbs_enriched = enrich_transactions_with_cbs_index(evaluated, history=cbs_history)
+    enriched = evaluate_historical_training_eligibility(cbs_enriched)
 
     for column in FINAL_COLUMNS:
         if column not in enriched.columns:
@@ -170,6 +184,21 @@ def main() -> None:
                 reason_counts[reason] = reason_counts.get(reason, 0) + 1
         for reason, count in sorted(reason_counts.items(), key=lambda kv: -kv[1]):
             print(f"  {reason}: {count}")
+
+    used_for_model = final[final["used_for_historical_model"] == True]  # noqa: E712
+    not_used_for_model = final[final["used_for_historical_model"] == False]  # noqa: E712
+    print("\nHistorical Regression training eligibility:")
+    print(f"  Used for historical model: {len(used_for_model)}")
+    print(f"  Not used for historical model: {len(not_used_for_model)}")
+    if not not_used_for_model.empty:
+        reason_counts = {}
+        for reasons_text in not_used_for_model["historical_model_exclusion_reason"].fillna(
+            "(no reason recorded)"
+        ):
+            for reason in reasons_text.split(", "):
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        for reason, count in sorted(reason_counts.items(), key=lambda kv: -kv[1]):
+            print(f"    {reason}: {count}")
 
 
 if __name__ == "__main__":

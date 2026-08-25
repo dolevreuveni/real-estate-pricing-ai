@@ -66,7 +66,12 @@ OUTPUT_COLUMNS = [
 def main() -> None:
     transactions = load_transactions_csv(TRANSACTIONS_PATH)
     eligible, trainable = select_training_transactions(transactions)
-    excluded_missing_fields = len(eligible) - len(trainable)
+    # `trainable` now requires the strict residential whitelist and
+    # sold-fraction/full-ownership validation, not just field completeness
+    # (see src/data/historical_transaction_enrichment.py) -- this count
+    # therefore spans all historical_model_exclusion_reason values, not
+    # only missing fields.
+    excluded_from_training = len(eligible) - len(trainable)
 
     X, y = transactions_to_training_frame(trainable)
     fit = train_and_evaluate(X, y)
@@ -104,7 +109,7 @@ def main() -> None:
     print("=== Training ===")
     print(f"Eligible transactions available: {len(eligible)}")
     print(f"Transactions used for training: {len(trainable)}")
-    print(f"Excluded (missing required model fields): {excluded_missing_fields}")
+    print(f"Excluded from training (residential whitelist / sold-fraction / missing fields): {excluded_from_training}")
     print(f"Features: {report['training_features']}")
 
     print("\n=== Evaluation ===")

@@ -7,7 +7,11 @@ files or the network.
 import numpy as np
 import pandas as pd
 
-from src.config.settings import CURRENT_MARKET_DATA_TYPE
+from src.config.settings import (
+    CURRENT_MARKET_DATA_TYPE,
+    CURRENT_MARKET_WEIGHT,
+    HISTORICAL_MARKET_WEIGHT,
+)
 from src.pricing.current_market_features import (
     apartments_to_market_feature_frame,
     listings_to_training_frame,
@@ -158,8 +162,10 @@ def test_final_recommendation_schema_and_synthetic_data_type_label():
     result["historical_base_price_per_sqm"] = (
         result["historical_base_price"] / result["interior_area_sqm"]
     )
-    result["historical_weight"] = 0.7
-    result["current_market_weight"] = 0.3
+    # derived from the actual configured weights, not hardcoded, so this
+    # test stays correct if the blend weights ever change
+    result["historical_weight"] = HISTORICAL_MARKET_WEIGHT
+    result["current_market_weight"] = CURRENT_MARKET_WEIGHT
     result["historical_model_version"] = "baseline_linear_v1"
     result["current_market_model_version"] = report["model_version"]
     result["current_market_data_type"] = CURRENT_MARKET_DATA_TYPE

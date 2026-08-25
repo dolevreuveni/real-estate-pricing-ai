@@ -32,6 +32,11 @@ def _synthetic_transactions(n=80, seed=1):
             "floor": floor,
             "adjusted_price": price,
             "is_eligible_comparable": True,
+            # this pipeline test is about training/prediction plumbing, not
+            # the residential whitelist itself (see
+            # test_historical_transaction_enrichment.py for that) -- mark
+            # every synthetic row trainable directly.
+            "used_for_historical_model": True,
         }
     )
 

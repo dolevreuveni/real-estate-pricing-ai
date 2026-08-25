@@ -24,6 +24,13 @@ def _transaction_row(**overrides):
         "adjusted_price_per_sqm": 56250.0,
         "is_eligible_comparable": True,
         "exclusion_reason": None,
+        # used_for_historical_model is now the single source of truth for
+        # trainability (src/data/historical_transaction_enrichment.py) --
+        # default these fixtures to "would pass" so existing test intent
+        # (missing adjusted_price / missing predictor -> not trainable)
+        # keeps working without re-deriving the full whitelist logic here.
+        "used_for_historical_model": True,
+        "historical_model_exclusion_reason": None,
     }
     row.update(overrides)
     return row
@@ -33,7 +40,12 @@ def test_only_eligible_transactions_are_used_for_training():
     df = pd.DataFrame(
         [
             _transaction_row(deal_id=1, is_eligible_comparable=True),
-            _transaction_row(deal_id=2, is_eligible_comparable=False),
+            _transaction_row(
+                deal_id=2,
+                is_eligible_comparable=False,
+                used_for_historical_model=False,
+                historical_model_exclusion_reason="not_eligible_comparable",
+            ),
         ]
     )
     eligible, trainable = select_training_transactions(df)
@@ -46,7 +58,12 @@ def test_transactions_missing_adjusted_price_are_excluded_from_training():
     df = pd.DataFrame(
         [
             _transaction_row(deal_id=1, adjusted_price=4_500_000.0),
-            _transaction_row(deal_id=2, adjusted_price=None),
+            _transaction_row(
+                deal_id=2,
+                adjusted_price=None,
+                used_for_historical_model=False,
+                historical_model_exclusion_reason="missing_required_model_fields",
+            ),
         ]
     )
     eligible, trainable = select_training_transactions(df)
@@ -61,13 +78,24 @@ def test_transactions_missing_a_predictor_are_excluded_from_training():
     df = pd.DataFrame(
         [
             _transaction_row(deal_id=1, floor=2.0),
-            _transaction_row(deal_id=2, floor=None),
+            _transaction_row(
+                deal_id=2,
+                floor=None,
+                used_for_historical_model=False,
+                historical_model_exclusion_reason="missing_required_model_fields",
+            ),
         ]
     )
     eligible, trainable = select_training_transactions(df)
 
     assert set(eligible["deal_id"]) == {1, 2}
     assert list(trainable["deal_id"]) == [1]
+
+
+def test_select_training_transactions_requires_used_for_historical_model_column():
+    df = pd.DataFrame([{"deal_id": 1, "is_eligible_comparable": True}])
+    with pytest.raises(ValueError, match="used_for_historical_model"):
+        select_training_transactions(df)
 
 
 def test_transactions_to_training_frame_has_only_the_canonical_columns():

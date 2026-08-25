@@ -3,3 +3,4 @@ openpyxl
 pytest
 requests
 scikit-learn
+streamlit
