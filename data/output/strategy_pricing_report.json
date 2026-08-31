@@ -1,12 +1,12 @@
 {
-  "generation_timestamp": "2026-08-25T21:53:41.589172+00:00",
+  "generation_timestamp": "2026-08-31T21:31:36.260759+00:00",
   "company_positioning_adjustment_pct": 0.02,
   "sales_phase_adjustment_pct": -0.05,
   "inventory_strategy_adjustment_pct": 0.01,
   "apartment_count": 39,
   "apartments_with_manual_adjustments": 0,
-  "average_market_recommended_price": 6779741.595311163,
-  "average_final_strategy_price": 6644146.76340494,
-  "total_market_recommended_value": 264409922.21713537,
-  "total_final_strategy_value": 259121723.77279267
+  "average_market_recommended_price": 6995648.960362627,
+  "average_final_strategy_price": 6855735.981155376,
+  "total_market_recommended_value": 272830309.45414245,
+  "total_final_strategy_value": 267373703.26505965
 }
